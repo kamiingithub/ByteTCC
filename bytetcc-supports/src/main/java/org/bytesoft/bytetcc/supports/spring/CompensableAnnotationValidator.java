@@ -39,6 +39,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class CompensableAnnotationValidator implements BeanFactoryPostProcessor {
 	static final Logger logger = LoggerFactory.getLogger(CompensableAnnotationValidator.class);
 
+	/**
+	 * 启动1：该方法主要就是对标注了 @Compensable的类、接口、confirm类、cancel类进行validate
+	 * @param beanFactory
+	 * @throws BeansException
+	 */
 	public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
 		Map<String, Class<?>> otherServiceMap = new HashMap<String, Class<?>>();
 		Map<String, Compensable> compensables = new HashMap<String, Compensable>();
@@ -66,23 +71,27 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 			}
 
 			if (compensable == null) {
+				// 没标注@Compensable的类
+				// 下面用于检查 confirm和cancel是不是在这里面
 				otherServiceMap.put(beanName, clazz);
 				continue;
 			} else {
+				// 标注了@Compensable的类
 				compensables.put(beanName, compensable);
 			}
 
 			try {
 				Class<?> interfaceClass = compensable.interfaceClass();
-				if (interfaceClass.isInterface() == false) {
+				if (!interfaceClass.isInterface()) {
 					throw new IllegalStateException("Compensable's interfaceClass must be a interface.");
 				}
 				Method[] methodArray = interfaceClass.getDeclaredMethods();
-				for (int j = 0; j < methodArray.length; j++) {
-					Method interfaceMethod = methodArray[j];
+				for (Method interfaceMethod : methodArray) {
 					Method method = clazz.getMethod(interfaceMethod.getName(), interfaceMethod.getParameterTypes());
+					// 校验simplified = true的是否规范
 					this.validateSimplifiedCompensable(method, clazz);
 					this.validateDeclaredRemotingException(method, clazz);
+					// 校验事务传播类型是否在{REQUIRED,MANDATORY,SUPPORTS,REQUIRES_NEW}内，即一定开启了事务
 					this.validateTransactionalPropagation(method, clazz);
 				}
 			} catch (IllegalStateException ex) {
@@ -96,6 +105,7 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 			}
 		}
 
+		// 校验confirmableKey和cancellableKey是否符合规范
 		Iterator<Map.Entry<String, Compensable>> itr = compensables.entrySet().iterator();
 		while (itr.hasNext()) {
 			Map.Entry<String, Compensable> entry = itr.next();
@@ -103,12 +113,14 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 			Class<?> interfaceClass = compensable.interfaceClass();
 			String confirmableKey = compensable.confirmableKey();
 			String cancellableKey = compensable.cancellableKey();
+			// 校验confirmableKey是否符合规范
 			if (StringUtils.isNotBlank(confirmableKey)) {
 				if (compensables.containsKey(confirmableKey)) {
 					throw new FatalBeanException(
 							String.format("The confirm bean(id= %s) cannot be a compensable service!", confirmableKey));
 				}
 				Class<?> clazz = otherServiceMap.get(confirmableKey);
+				// 检验confirmableKey是否存在对应类
 				if (clazz == null) {
 					throw new IllegalStateException(String.format("The confirm bean(id= %s) is not exists!", confirmableKey));
 				}
@@ -118,6 +130,7 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 					for (int j = 0; j < methodArray.length; j++) {
 						Method interfaceMethod = methodArray[j];
 						Method method = clazz.getMethod(interfaceMethod.getName(), interfaceMethod.getParameterTypes());
+						// 一堆检验
 						this.validateDeclaredRemotingException(method, clazz);
 						this.validateTransactionalPropagation(method, clazz);
 						this.validateTransactionalRollbackFor(method, clazz, confirmableKey);
@@ -131,6 +144,7 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 				}
 			}
 
+			// cancellableKey同上
 			if (StringUtils.isNotBlank(cancellableKey)) {
 				if (compensables.containsKey(cancellableKey)) {
 					throw new FatalBeanException(
@@ -166,14 +180,15 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 		Compensable compensable = clazz.getAnnotation(Compensable.class);
 		Class<?> interfaceClass = compensable.interfaceClass();
 		Method[] methods = interfaceClass.getDeclaredMethods();
-		if (compensable.simplified() == false) {
+		if (!compensable.simplified()) {
 			return;
 		} else if (method.getAnnotation(CompensableConfirm.class) != null) {
 			throw new FatalBeanException(
 					String.format("The try method(%s) can not be the same as the confirm method!", method));
 		} else if (method.getAnnotation(CompensableCancel.class) != null) {
 			throw new FatalBeanException(String.format("The try method(%s) can not be the same as the cancel method!", method));
-		} else if (methods != null && methods.length > 1) {
+		} else if (methods.length > 1) {
+			// simplified = true只能有一个method
 			throw new FatalBeanException(String.format(
 					"The interface bound by @Compensable(simplified= true) supports only one method, class= %s!", clazz));
 		}
@@ -183,14 +198,13 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 
 		CompensableConfirm confirmable = null;
 		CompensableCancel cancellable = null;
-		for (int i = 0; i < methodArray.length; i++) {
-			Method element = methodArray[i];
+		for (Method element : methodArray) {
 			Class<?>[] paramTypes = element.getParameterTypes();
 			CompensableConfirm confirm = element.getAnnotation(CompensableConfirm.class);
 			CompensableCancel cancel = element.getAnnotation(CompensableCancel.class);
 			if (confirm == null && cancel == null) {
 				continue;
-			} else if (Arrays.equals(parameterTypes, paramTypes) == false) {
+			} else if (!Arrays.equals(parameterTypes, paramTypes)) {
 				throw new FatalBeanException(
 						String.format("The parameter types of confirm/cancel method({}) is different from the try method({})!",
 								element, method));
@@ -201,7 +215,7 @@ public class CompensableAnnotationValidator implements BeanFactoryPostProcessor 
 				} else {
 					confirmable = confirm;
 				}
-			} else if (cancel != null) {
+			} else {
 				if (cancellable != null) {
 					throw new FatalBeanException(
 							String.format("There are more than one cancel method specified, class= %s!", clazz));
