@@ -38,6 +38,7 @@ public class CompensableContextPostProcessor implements BeanFactoryPostProcessor
 	/**
 	 * 启动2：把context注入到实现 CompensableContextAware接口的类中
 	 *
+	 * 后面的两个步骤无法注释，所以写在这里
 	 * 启动3：动态代理XADataSource
 	 * @see ManagedConnectionFactoryPostProcessor#postProcessAfterInitialization
 	 *
